@@ -7,30 +7,23 @@ from openai import OpenAI
 from io import BytesIO, StringIO
 import requests
 from bs4 import BeautifulSoup
+import time
 
 app = FastAPI()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def fetch_images_from_page(url):
-    try:
-        r = requests.get(url, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-        imgs = []
-        for img in soup.find_all("img"):
-            src = img.get("src") or img.get("data-src")
-            if not src:
-                continue
-            if src.startswith("//"):
-                src = "https:" + src
-            elif src.startswith("/"):
-                src = re.match(r"^https?://[^/]+", url).group(0) + src
-            elif not src.startswith("http"):
-                src = url.rstrip("/") + "/" + src
-            if re.search(r"\.(jpe?g|png)$", src, re.IGNORECASE):
-                imgs.append(src)
-        return list(dict.fromkeys(imgs))
-    except Exception:
-        return []
+def find_image_duckduckgo(ean):
+    query = str(ean)
+    url = f"https://duckduckgo.com/?q={requests.utils.quote(query)}&t=h_&iar=images&iax=images&ia=images"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    session = requests.Session()
+    # DuckDuckGo отдаёт токен, если сначала сделать запрос на главную
+    session.get("https://duckduckgo.com/", headers=headers)
+    time.sleep(1)  # уменьшить бан
+    resp = session.get(url, headers=headers)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    imgs = [img["src"] for img in soup.find_all("img") if img.get("src") and img["src"].startswith("http")]
+    return imgs[0] if imgs else ""
 
 def find_title_column(df):
     priority = ["name", "назв", "product", "товар", "brand", "title"]
@@ -97,7 +90,6 @@ async def upload(file: UploadFile = File(...)):
     col_price = next((c for c in df.columns if "price" in c.lower() or "цена" in c.lower()), None)
     col_cat = next((c for c in df.columns if "category" in c.lower() or "катег" in c.lower()), None)
     col_subcat = next((c for c in df.columns if "subcat" in c.lower() or "подкат" in c.lower()), None)
-    col_bekijk = next((c for c in df.columns if "bekijk" in c.lower() or "ссылка" in c.lower() or "url" in c.lower()), None)
     col_origin = next((c for c in df.columns if "origin" in c.lower() or "страна" in c.lower()), None)
 
     titles = df[col_title].astype(str).tolist()
@@ -119,14 +111,16 @@ async def upload(file: UploadFile = File(...)):
         main_cat = str(row.get(col_cat, "")) if col_cat else ""
         sub_cat = str(row.get(col_subcat, "")) if col_subcat else ""
         origin = str(row.get(col_origin, "")) if col_origin else ""
-        link = str(row.get(col_bekijk, "")) if col_bekijk else ""
 
         handle = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
         desc = generate_description(title, main_cat)
         seo_title = generate_seo_title(title, brand, main_cat)
         seo_desc = generate_seo_description(title, brand, main_cat)
         tags = ", ".join(filter(None, [main_cat, sub_cat, origin]))
-        images = fetch_images_from_page(link)
+
+        # Ищем фото по EAN
+        image_url = find_image_duckduckgo(ean)
+        images = [image_url] if image_url else []
 
         if images:
             for img_idx, img in enumerate(images):
