@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test OpenAI API</title>
+</head>
+<body>
+    <h1>Chat with GPT-4</h1>
+    <form id="chat-form">
+        <textarea id="prompt" rows="4" cols="50" placeholder="Введите ваш запрос..."></textarea><br>
+        <button type="submit">Отправить</button>
+    </form>
+    <h2>Ответ:</h2>
+    <pre id="response"></pre>
+
+    <script>
+        document.getElementById('chat-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const prompt = document.getElementById('prompt').value;
+            const responseEl = document.getElementById('response');
+            responseEl.textContent = 'Загрузка...';
+
+            const res = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt })
+            });
+
+            const data = await res.json();
+            responseEl.textContent = data.response || 'Ошибка';
+        });
+    </script>
+</body>
+</html>
