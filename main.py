@@ -1,8 +1,8 @@
 import os
 import re
 import pandas as pd
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import HTMLResponse, StreamingResponse
 from openai import OpenAI
 from io import BytesIO, StringIO
 import requests
@@ -10,8 +10,6 @@ from bs4 import BeautifulSoup
 
 app = FastAPI()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-PROGRESS = {}
 
 def fetch_images_from_page(url):
     try:
@@ -34,12 +32,32 @@ def fetch_images_from_page(url):
     except Exception:
         return []
 
-def extract_brand_from_title(title, brand_list):
-    # Находит бренды по наличию в начале названия товара
-    for b in sorted(brand_list, key=lambda x: -len(x)):
+def find_title_column(df):
+    priority = ["name", "назв", "product", "товар", "brand", "title"]
+    for col in df.columns:
+        for key in priority:
+            if key in col.lower():
+                return col
+    return df.columns[0]
+
+def extract_brands_from_titles(titles):
+    # Собираем первые 1–3 слова (максимально длинные повторяющиеся фрагменты)
+    split_titles = [re.split(r"[\s,|/-]", t, maxsplit=3) for t in titles]
+    possible_brands = set()
+    for st in split_titles:
+        for l in range(1, 4):
+            brand = " ".join(st[:l]).strip()
+            if len(brand) > 2:
+                possible_brands.add(brand)
+    # Сортируем по длине, чаще встречающиеся наверх
+    brands_freq = {b: sum([t.lower().startswith(b.lower()) for t in titles]) for b in possible_brands}
+    brands = sorted(brands_freq, key=lambda b: (-brands_freq[b], -len(b)))
+    return brands
+
+def extract_brand_from_title(title, brands):
+    for b in brands:
         if title.lower().startswith(b.lower()):
             return b
-    # Если не найдено — Unknown
     return "Unknown"
 
 def generate_description(title, category):
@@ -63,13 +81,6 @@ def generate_seo_title(title, brand, category):
 def generate_seo_description(title, brand, category):
     return f"Entdecke {brand} {title} in der Kategorie {category} – jetzt im Onlineshop zum besten Preis bestellen!"
 
-def get_brand_list(df):
-    # Собираем список уникальных брендов (максимально длинных, для поиска в начале названия)
-    col_brand = "Brand"
-    brands = df[col_brand].dropna().astype(str).unique().tolist()
-    brands = sorted(set([b.strip() for b in brands if b.strip()]), key=lambda x: -len(x))
-    return brands
-
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
     ext = os.path.splitext(file.filename)[1].lower()
@@ -80,36 +91,34 @@ async def upload(file: UploadFile = File(...)):
     else:
         return {"error": "Только .csv или .xlsx/.xls"}
 
-    col_sku = "Artikelnummer"
-    col_ean = "EAN"
-    col_qty = "Available Qty"
-    col_brand = "Brand"
-    col_title = "Brand"
-    col_content = "Content"
-    col_price = "Price"
-    col_cat = "Main category"
-    col_subcat = "Subcategory"
-    col_bekijk = "Bekijk"
-    col_origin = "Origin of product"
+    col_title = find_title_column(df)
+    col_sku = next((c for c in df.columns if "sku" in c.lower() or "арт" in c.lower()), None)
+    col_ean = next((c for c in df.columns if "ean" in c.lower() or "баркод" in c.lower()), None)
+    col_qty = next((c for c in df.columns if "qty" in c.lower() or "нал" in c.lower()), None)
+    col_content = next((c for c in df.columns if "content" in c.lower() or "объем" in c.lower()), None)
+    col_price = next((c for c in df.columns if "price" in c.lower() or "цена" in c.lower()), None)
+    col_cat = next((c for c in df.columns if "category" in c.lower() or "катег" in c.lower()), None)
+    col_subcat = next((c for c in df.columns if "subcat" in c.lower() or "подкат" in c.lower()), None)
+    col_bekijk = next((c for c in df.columns if "bekijk" in c.lower() or "ссылка" in c.lower() or "url" in c.lower()), None)
+    col_origin = next((c for c in df.columns if "origin" in c.lower() or "страна" in c.lower()), None)
 
-    brand_list = get_brand_list(df)
+    titles = df[col_title].astype(str).tolist()
+    brands = extract_brands_from_titles(titles)
+
     result = []
-    total = len(df)
-    processed = 0
-
     for idx, row in df.iterrows():
-        sku = str(row.get(col_sku, ""))
-        ean = str(row.get(col_ean, ""))
-        qty = int(row.get(col_qty, 0)) if not pd.isnull(row.get(col_qty, 0)) else 0
         title = str(row.get(col_title, ""))
-        content = str(row.get(col_content, ""))
-        price = str(row.get(col_price, "")).replace(",", ".")
-        main_cat = str(row.get(col_cat, ""))
-        sub_cat = str(row.get(col_subcat, ""))
-        origin = str(row.get(col_origin, ""))
-        link = str(row.get(col_bekijk, ""))
+        brand = extract_brand_from_title(title, brands)
+        sku = str(row.get(col_sku, "")) if col_sku else ""
+        ean = str(row.get(col_ean, "")) if col_ean else ""
+        qty = int(row.get(col_qty, 0)) if col_qty and not pd.isnull(row.get(col_qty, 0)) else 0
+        content = str(row.get(col_content, "")) if col_content else ""
+        price = str(row.get(col_price, "")).replace(",", ".") if col_price else ""
+        main_cat = str(row.get(col_cat, "")) if col_cat else ""
+        sub_cat = str(row.get(col_subcat, "")) if col_subcat else ""
+        origin = str(row.get(col_origin, "")) if col_origin else ""
+        link = str(row.get(col_bekijk, "")) if col_bekijk else ""
 
-        brand = extract_brand_from_title(title, brand_list)
         handle = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
         desc = generate_description(title, main_cat)
         seo_title = generate_seo_title(title, brand, main_cat)
@@ -117,7 +126,6 @@ async def upload(file: UploadFile = File(...)):
         tags = ", ".join(filter(None, [main_cat, sub_cat, origin]))
         images = fetch_images_from_page(link)
 
-        # Только с картинками!
         if images:
             for img_idx, img in enumerate(images):
                 result.append({
@@ -149,7 +157,6 @@ async def upload(file: UploadFile = File(...)):
                     "SEO Description": seo_desc,
                     "Status": "active"
                 })
-        processed += 1
 
     out_df = pd.DataFrame(result)
     output = StringIO()
