@@ -12,14 +12,15 @@ import time
 app = FastAPI()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+DEFAULT_IMAGE = "https://store.moma.org/cdn/shop/files/cb53004d-5f7b-47cd-81ed-0103369d43cb_3072_28314069-17ff-44bc-952f-f2c1eefbb036_1296x.jpg"
+
 def find_image_duckduckgo(ean):
     query = str(ean)
     url = f"https://duckduckgo.com/?q={requests.utils.quote(query)}&t=h_&iar=images&iax=images&ia=images"
     headers = {"User-Agent": "Mozilla/5.0"}
     session = requests.Session()
-    # DuckDuckGo отдаёт токен, если сначала сделать запрос на главную
     session.get("https://duckduckgo.com/", headers=headers)
-    time.sleep(1)  # уменьшить бан
+    time.sleep(1)
     resp = session.get(url, headers=headers)
     soup = BeautifulSoup(resp.text, "html.parser")
     imgs = [img["src"] for img in soup.find_all("img") if img.get("src") and img["src"].startswith("http")]
@@ -118,41 +119,41 @@ async def upload(file: UploadFile = File(...)):
         seo_desc = generate_seo_description(title, brand, main_cat)
         tags = ", ".join(filter(None, [main_cat, sub_cat, origin]))
 
-        # Ищем фото по EAN
         image_url = find_image_duckduckgo(ean)
-        images = [image_url] if image_url else []
+        if not image_url:
+            image_url = DEFAULT_IMAGE
+        images = [image_url]
 
-        if images:
-            for img_idx, img in enumerate(images):
-                result.append({
-                    "Handle": handle,
-                    "Title": title,
-                    "Body (HTML)": desc,
-                    "Vendor": brand,
-                    "Type": main_cat,
-                    "Tags": tags,
-                    "Published": "TRUE",
-                    "Option1 Name": "Inhalt",
-                    "Option1 Value": content,
-                    "Variant SKU": sku,
-                    "Variant Grams": "",
-                    "Variant Inventory Tracker": "shopify",
-                    "Variant Inventory Qty": qty,
-                    "Variant Inventory Policy": "deny",
-                    "Variant Fulfillment Service": "manual",
-                    "Variant Price": price,
-                    "Variant Compare At Price": "",
-                    "Variant Requires Shipping": "TRUE",
-                    "Variant Taxable": "TRUE",
-                    "Variant Barcode": ean,
-                    "Image Src": img,
-                    "Image Position": str(img_idx+1),
-                    "Image Alt Text": f"{brand} {title}",
-                    "Gift Card": "FALSE",
-                    "SEO Title": seo_title,
-                    "SEO Description": seo_desc,
-                    "Status": "active"
-                })
+        for img_idx, img in enumerate(images):
+            result.append({
+                "Handle": handle,
+                "Title": title,
+                "Body (HTML)": desc,
+                "Vendor": brand,
+                "Type": main_cat,
+                "Tags": tags,
+                "Published": "TRUE",
+                "Option1 Name": "Inhalt",
+                "Option1 Value": content,
+                "Variant SKU": sku,
+                "Variant Grams": "",
+                "Variant Inventory Tracker": "shopify",
+                "Variant Inventory Qty": qty,
+                "Variant Inventory Policy": "deny",
+                "Variant Fulfillment Service": "manual",
+                "Variant Price": price,
+                "Variant Compare At Price": "",
+                "Variant Requires Shipping": "TRUE",
+                "Variant Taxable": "TRUE",
+                "Variant Barcode": ean,
+                "Image Src": img,
+                "Image Position": str(img_idx+1),
+                "Image Alt Text": f"{brand} {title}",
+                "Gift Card": "FALSE",
+                "SEO Title": seo_title,
+                "SEO Description": seo_desc,
+                "Status": "active"
+            })
 
     out_df = pd.DataFrame(result)
     output = StringIO()
