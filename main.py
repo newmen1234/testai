@@ -41,7 +41,6 @@ def find_title_column(df):
     return df.columns[0]
 
 def extract_brands_from_titles(titles):
-    # Собираем первые 1–3 слова (максимально длинные повторяющиеся фрагменты)
     split_titles = [re.split(r"[\s,|/-]", t, maxsplit=3) for t in titles]
     possible_brands = set()
     for st in split_titles:
@@ -49,7 +48,6 @@ def extract_brands_from_titles(titles):
             brand = " ".join(st[:l]).strip()
             if len(brand) > 2:
                 possible_brands.add(brand)
-    # Сортируем по длине, чаще встречающиеся наверх
     brands_freq = {b: sum([t.lower().startswith(b.lower()) for t in titles]) for b in possible_brands}
     brands = sorted(brands_freq, key=lambda b: (-brands_freq[b], -len(b)))
     return brands
@@ -112,10 +110,10 @@ async def upload(file: UploadFile = File(...)):
         sku = str(row.get(col_sku, "")) if col_sku else ""
         ean = str(row.get(col_ean, "")) if col_ean else ""
         qty_raw = row.get(col_qty, 0) if col_qty else 0
-try:
-    qty = int(float(str(qty_raw).replace(",", ".").replace("-", "0").strip()))
-except Exception:
-    qty = 0
+        try:
+            qty = int(float(str(qty_raw).replace(",", ".").replace("-", "0").strip()))
+        except Exception:
+            qty = 0
         content = str(row.get(col_content, "")) if col_content else ""
         price = str(row.get(col_price, "")).replace(",", ".") if col_price else ""
         main_cat = str(row.get(col_cat, "")) if col_cat else ""
