@@ -111,7 +111,11 @@ async def upload(file: UploadFile = File(...)):
         brand = extract_brand_from_title(title, brands)
         sku = str(row.get(col_sku, "")) if col_sku else ""
         ean = str(row.get(col_ean, "")) if col_ean else ""
-        qty = int(row.get(col_qty, 0)) if col_qty and not pd.isnull(row.get(col_qty, 0)) else 0
+        qty_raw = row.get(col_qty, 0) if col_qty else 0
+try:
+    qty = int(float(str(qty_raw).replace(",", ".").replace("-", "0").strip()))
+except Exception:
+    qty = 0
         content = str(row.get(col_content, "")) if col_content else ""
         price = str(row.get(col_price, "")).replace(",", ".") if col_price else ""
         main_cat = str(row.get(col_cat, "")) if col_cat else ""
