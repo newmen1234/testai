@@ -14,17 +14,21 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 DEFAULT_IMAGE = "https://store.moma.org/cdn/shop/files/cb53004d-5f7b-47cd-81ed-0103369d43cb_3072_28314069-17ff-44bc-952f-f2c1eefbb036_1296x.jpg"
 
-def find_image_duckduckgo(ean):
-    query = str(ean)
-    url = f"https://duckduckgo.com/?q={requests.utils.quote(query)}&t=h_&iar=images&iax=images&ia=images"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    session = requests.Session()
-    session.get("https://duckduckgo.com/", headers=headers)
-    time.sleep(1)
-    resp = session.get(url, headers=headers)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    imgs = [img["src"] for img in soup.find_all("img") if img.get("src") and img["src"].startswith("http")]
-    return imgs[0] if imgs else ""
+def extract_brand_with_gpt(title):
+    system_prompt = (
+        "Ты — эксперт по мировым брендам (особенно косметика, парфюмерия, фэшн)."
+        "В начале строки — название товара. Определи, есть ли там реальный бренд. "
+        "Если да — верни только его название, без лишнего текста. Если бренда нет — верни Unknown."
+    )
+    user_prompt = f"Название товара: {title}"
+    resp = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+    )
+    return resp.choices[0].message.content.strip()
 
 def find_title_column(df):
     priority = ["name", "назв", "product", "товар", "brand", "title"]
@@ -33,24 +37,6 @@ def find_title_column(df):
             if key in col.lower():
                 return col
     return df.columns[0]
-
-def extract_brands_from_titles(titles):
-    split_titles = [re.split(r"[\s,|/-]", t, maxsplit=3) for t in titles]
-    possible_brands = set()
-    for st in split_titles:
-        for l in range(1, 4):
-            brand = " ".join(st[:l]).strip()
-            if len(brand) > 2:
-                possible_brands.add(brand)
-    brands_freq = {b: sum([t.lower().startswith(b.lower()) for t in titles]) for b in possible_brands}
-    brands = sorted(brands_freq, key=lambda b: (-brands_freq[b], -len(b)))
-    return brands
-
-def extract_brand_from_title(title, brands):
-    for b in brands:
-        if title.lower().startswith(b.lower()):
-            return b
-    return "Unknown"
 
 def generate_description(title, category):
     system_prompt = (
@@ -93,13 +79,10 @@ async def upload(file: UploadFile = File(...)):
     col_subcat = next((c for c in df.columns if "subcat" in c.lower() or "подкат" in c.lower()), None)
     col_origin = next((c for c in df.columns if "origin" in c.lower() or "страна" in c.lower()), None)
 
-    titles = df[col_title].astype(str).tolist()
-    brands = extract_brands_from_titles(titles)
-
     result = []
     for idx, row in df.iterrows():
         title = str(row.get(col_title, ""))
-        brand = extract_brand_from_title(title, brands)
+        brand = extract_brand_with_gpt(title)
         sku = str(row.get(col_sku, "")) if col_sku else ""
         ean = str(row.get(col_ean, "")) if col_ean else ""
         qty_raw = row.get(col_qty, 0) if col_qty else 0
@@ -119,41 +102,37 @@ async def upload(file: UploadFile = File(...)):
         seo_desc = generate_seo_description(title, brand, main_cat)
         tags = ", ".join(filter(None, [main_cat, sub_cat, origin]))
 
-        image_url = find_image_duckduckgo(ean)
-        if not image_url:
-            image_url = DEFAULT_IMAGE
-        images = [image_url]
+        image_url = DEFAULT_IMAGE
 
-        for img_idx, img in enumerate(images):
-            result.append({
-                "Handle": handle,
-                "Title": title,
-                "Body (HTML)": desc,
-                "Vendor": brand,
-                "Type": main_cat,
-                "Tags": tags,
-                "Published": "TRUE",
-                "Option1 Name": "Inhalt",
-                "Option1 Value": content,
-                "Variant SKU": sku,
-                "Variant Grams": "",
-                "Variant Inventory Tracker": "shopify",
-                "Variant Inventory Qty": qty,
-                "Variant Inventory Policy": "deny",
-                "Variant Fulfillment Service": "manual",
-                "Variant Price": price,
-                "Variant Compare At Price": "",
-                "Variant Requires Shipping": "TRUE",
-                "Variant Taxable": "TRUE",
-                "Variant Barcode": ean,
-                "Image Src": img,
-                "Image Position": str(img_idx+1),
-                "Image Alt Text": f"{brand} {title}",
-                "Gift Card": "FALSE",
-                "SEO Title": seo_title,
-                "SEO Description": seo_desc,
-                "Status": "active"
-            })
+        result.append({
+            "Handle": handle,
+            "Title": title,
+            "Body (HTML)": desc,
+            "Vendor": brand,
+            "Type": main_cat,
+            "Tags": tags,
+            "Published": "TRUE",
+            "Option1 Name": "Inhalt",
+            "Option1 Value": content,
+            "Variant SKU": sku,
+            "Variant Grams": "",
+            "Variant Inventory Tracker": "shopify",
+            "Variant Inventory Qty": qty,
+            "Variant Inventory Policy": "deny",
+            "Variant Fulfillment Service": "manual",
+            "Variant Price": price,
+            "Variant Compare At Price": "",
+            "Variant Requires Shipping": "TRUE",
+            "Variant Taxable": "TRUE",
+            "Variant Barcode": ean,
+            "Image Src": image_url,
+            "Image Position": "1",
+            "Image Alt Text": f"{brand} {title}",
+            "Gift Card": "FALSE",
+            "SEO Title": seo_title,
+            "SEO Description": seo_desc,
+            "Status": "active"
+        })
 
     out_df = pd.DataFrame(result)
     output = StringIO()
